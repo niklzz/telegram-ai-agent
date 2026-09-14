@@ -171,7 +171,13 @@ async def process_queue_item(
     if reply_message is None:
         return
     await send_streaming_response(
-        reply_message, session_manager, channel_key, prompt, tmux_manager=tmux_manager
+        reply_message,
+        session_manager,
+        channel_key,
+        prompt,
+        tmux_manager=tmux_manager,
+        # Without it _resolve_stream_mode falls back to verbose and "live" never applies.
+        topic_config=tmux_manager.get_topic_config(),  # type: ignore[arg-type]
     )
 
 

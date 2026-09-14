@@ -7,7 +7,7 @@ import contextlib
 import html
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from aiogram.enums import ChatType, ParseMode
@@ -100,6 +100,11 @@ def stream_event_action(mode: StreamMode | str, event: StreamEvent) -> DeliveryA
     if mode == "live":
         return "buffer_progress"
     return "separate_progress"
+
+
+def is_duplicate_final(last_text: str, final_text: str) -> bool:
+    """True when the result text repeats the last streamed assistant text."""
+    return bool(last_text) and last_text.strip() == final_text.strip()
 
 
 _MAX_REPLY_CONTEXT_LEN = 2000
@@ -360,6 +365,11 @@ class _StreamCtx:
     live_buffer: LiveStatusBuffer | None
     sent_message_ids: list[int]
     send_failed: bool = False
+    # Last assistant "text" event already posted as its own message (subprocess
+    # mode). Claude's stream-json repeats that text in the "result" event, so
+    # the final send is skipped when it would be a byte-for-byte repeat.
+    last_text: str = ""
+    last_text_message_ids: list[int] = field(default_factory=list)
 
 
 async def _send_status_silent(ctx: _StreamCtx, content: str) -> None:
@@ -497,10 +507,13 @@ async def _send_tmux_answer(ctx: _StreamCtx, content: str, *, label: str) -> boo
 async def _handle_text_event(ctx: _StreamCtx, event: StreamEvent) -> None:
     """Send verbose intermediate text as its own Telegram message."""
     if not ctx.used_tmux:
+        ctx.last_text = event.content
+        ctx.last_text_message_ids = []
         await _format_and_send_chunks(
             ctx,
             event.content,
             label=f"text {ctx.channel_key}",
+            record_fn=ctx.last_text_message_ids.append,
         )
         return
 
@@ -884,6 +897,15 @@ async def send_streaming_response(
     # so no post-stream recording is needed here.
     final_text = response
     if not final_text:
+        return
+
+    if is_duplicate_final(ctx.last_text, final_text) and ctx.last_text_message_ids:
+        # ponytail: the text message loses the topic keyboard; commands still work.
+        logger.info("Final answer already posted as text on %s, not resending", ctx.channel_key)
+        current_sid = ctx.session_manager.get_current_session_id(ctx.channel_key)
+        if current_sid:
+            for msg_id in ctx.last_text_message_ids:
+                ctx.session_manager.record_message(msg_id, current_sid, ctx.channel_key)
         return
 
     await _send_final_response(ctx, final_text)
