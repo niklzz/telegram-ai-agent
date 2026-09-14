@@ -61,6 +61,10 @@ class Settings(BaseSettings):
     session_cleanup_interval_sec: int = 300
     cc_query_timeout_sec: int = 21600
     deepgram_api_key: str = ""
+    # Local OpenAI-compatible STT server (e.g. speaches). When set, voice messages
+    # go there instead of Deepgram; ``stt_model`` is the ``model`` form field.
+    stt_url: str = ""
+    stt_model: str = "deepdml/faster-whisper-large-v3-turbo-ct2"
     cc_wait_timeout_sec: int = 10
     cc_inactivity_kill_sec: float = 3600
     cc_agent_progress_throttle_sec: float = 10
