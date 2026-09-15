@@ -1,6 +1,12 @@
-# Telegram AI Agent
+# Telegram AI Agent (форк)
 
 [English version](README.md)
+
+Это форк
+[pavel-molyanov/telegram-ai-agent](https://github.com/pavel-molyanov/telegram-ai-agent)
+с локальным распознаванием речи и двумя исправлениями стриминга. Точный список
+отличий — в разделе [Об этом форке](#об-этом-форке). Всё остальное ниже —
+операторский мануал upstream, поддерживается в актуальном состоянии.
 
 Telegram AI Agent - open-source Telegram-бот для управления Claude Code и Codex
 CLI на вашем VPS. Он превращает Telegram в удаленный интерфейс для вайбкодинга:
@@ -11,6 +17,52 @@ CLI на вашем VPS. Он превращает Telegram в удаленны�
 В репозитории лежит только публичный переиспользуемый runtime бота. Здесь нет
 приватных данных ассистента, приватных промптов, runtime state, реальных ID,
 токенов или машинно-специфичного деплоя.
+
+## Об этом форке
+
+Ветки:
+
+- `main-fork` (по умолчанию): upstream плюс перечисленные здесь изменения.
+- `main`: нетронутое зеркало upstream, нужно для rebase и для отправки
+  исправлений обратно.
+
+Отличия от upstream:
+
+### Локальное распознавание речи вместо Deepgram
+
+В upstream голосовые распознаются только через Deepgram: нужен платный
+облачный аккаунт, а аудио уходит с вашей машины. Форк добавляет `STT_URL`:
+если переменная задана, голосовые отправляются на любой OpenAI-совместимый
+эндпоинт `/v1/audio/transcriptions`, например
+[speaches](https://github.com/speaches-ai/speaches) с faster-whisper на том же
+хосте или в локальной сети. `STT_MODEL` задаёт имя модели, которое уходит на
+сервер. Deepgram остаётся запасным вариантом при пустом `STT_URL`, поэтому
+существующие установки работают без изменений.
+
+Чем лучше: голосовые работают полностью офлайн и бесплатно, аудио не покидает
+вашу сеть, модель класса Whisper можно менять на любую. Таймаут локального
+запроса 120 секунд с расчётом на инференс на CPU. Текущее ограничение: язык
+запроса захардкожен как `ru`; если общаетесь с ботом на другом языке, поменяйте
+его в `src/telegram_bot/core/services/transcriber.py`.
+
+### `stream_mode` работает в режиме subprocess
+
+В upstream subprocess-путь вызывает обработчик стриминга без конфига топика,
+и резолвер режима молча откатывается к `verbose`. Команда `/stream live` в
+топике ничего не меняла: каждое событие инструмента всё равно приходило
+отдельным сообщением. Форк пробрасывает конфиг топика, так что `live` и
+`minimal` ведут себя как описано в документации.
+
+### Финальный ответ не дублируется
+
+В `stream-json` Claude повторяет последний текст ассистента внутри финального
+события `result`. Upstream отправляет оба, поэтому каждый ответ в режиме
+subprocess приходил дважды. Форк сравнивает тексты и пропускает вторую отправку
+при полном совпадении, при этом сохраняет ID первого сообщения, чтобы
+reply-to-resume продолжал работать.
+
+Оба исправления стриминга — баги upstream и кандидаты на pull request в
+исходный проект.
 
 ## Что Можно Делать
 
@@ -86,7 +138,8 @@ Forum topics изолированы по Telegram `chat_id` и `thread_id`. У �
 - Claude Code CLI и/или Codex CLI, установленные под тем же Linux-user, который
   запускает бота
 - `tmux` для постоянных dev-сессий
-- опционально: Deepgram API key для voice transcription
+- опционально: локальный OpenAI-совместимый STT-сервер (`STT_URL`) или
+  Deepgram API key для распознавания голосовых
 
 Бот может работать, если установлен только один agent CLI. По умолчанию он
 предпочитает Claude Code, но если Claude Code нет, а Codex установлен, топик
@@ -110,7 +163,7 @@ CLI залогинен или настроен под тем же Linux-user, к
 Если на VPS уже есть Claude Code или Codex, это самый простой путь.
 
 ```bash
-git clone https://github.com/pavel-molyanov/telegram-ai-agent.git
+git clone https://github.com/niklzz/telegram-ai-agent.git
 cd telegram-ai-agent
 uv sync
 ```
@@ -145,7 +198,7 @@ systemd service.
 Склонируйте репозиторий и установите зависимости:
 
 ```bash
-git clone https://github.com/pavel-molyanov/telegram-ai-agent.git
+git clone https://github.com/niklzz/telegram-ai-agent.git
 cd telegram-ai-agent
 uv sync
 cp .env.example .env
@@ -159,6 +212,8 @@ chmod 600 .env topic_config.json
 TELEGRAM_BOT_TOKEN=replace-with-botfather-token
 ALLOWED_USER_IDS=[123456789]
 BOT_LANG=ru
+STT_URL=
+STT_MODEL=deepdml/faster-whisper-large-v3-turbo-ct2
 DEEPGRAM_API_KEY=
 PROJECT_ROOT=.
 APP_ROOT=
@@ -186,7 +241,12 @@ CODEX_UPDATE_COOLDOWN_SEC=86400
   каталогами. В первом лежат установленный код и MCP launchers, во втором —
   редактируемые проекты, topic config, session mappings, tmux state и файлы.
 - `DEFAULT_CWD`: рабочая папка по умолчанию для ненастроенных топиков.
-- `DEEPGRAM_API_KEY`: оставьте пустым, если не нужны voice messages.
+- `STT_URL`: базовый URL локального OpenAI-совместимого сервера распознавания,
+  например `http://127.0.0.1:8000`. Если задан, имеет приоритет над Deepgram.
+- `STT_MODEL`: имя модели, передаваемое этому серверу. Значение по умолчанию
+  соответствует сборке faster-whisper large-v3-turbo для speaches.
+- `DEEPGRAM_API_KEY`: облачный запасной вариант при пустом `STT_URL`. Оставьте
+  обе переменные пустыми, если голосовые не нужны.
 - `CODEX_AUTO_UPDATE_ENABLED`: включает автоматические и ручные обновления
   Codex. Timeout ограничивает любое обновление, cooldown — только автоматические.
 
@@ -345,7 +405,10 @@ entry.
 
 Human-readable промежуточные обновления остаются отдельными сообщениями во всех
 режимах. Нормализованный финальный ответ всегда приходит как один отдельный
-логический ответ. `live` — лучший default для большинства проектных задач.
+логический ответ. В режиме subprocess, если финальный ответ совпадает с
+последним отправленным текстовым сообщением, повторно он не отправляется,
+используется уже существующее сообщение. `live` — лучший default для
+большинства проектных задач.
 
 ## TUI Mode
 
@@ -540,10 +603,11 @@ PYTHONDONTWRITEBYTECODE=1 uv run python -c "import telegram_bot; import telegram
 
 ## Feedback
 
-Issues, bug reports и идеи welcome. Откройте GitHub issue, если что-то
-непонятно, сломано или не хватает важной возможности.
+По изменениям форка (локальный STT, исправления стриминга) открывайте issue в
+[niklzz/telegram-ai-agent](https://github.com/niklzz/telegram-ai-agent). По
+всему остальному правильное место — upstream-проект.
 
-Бота сделал Паша Молянов. Я пишу про бизнес, AI-ассистентов, разработку и
+Исходного бота сделал Паша Молянов. Я пишу про бизнес, AI-ассистентов, разработку и
 запуск полезных сервисов в Telegram-канале:
 [@molyanov_blog](https://t.me/+zJ5qmSsoYediYzdi). Мой сайт:
 [molyanov.ru](https://molyanov.ru).

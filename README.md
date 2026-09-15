@@ -1,6 +1,12 @@
-# Telegram AI Agent
+# Telegram AI Agent (fork)
 
 [Русская версия](README.ru.md)
+
+This is a fork of
+[pavel-molyanov/telegram-ai-agent](https://github.com/pavel-molyanov/telegram-ai-agent)
+with a local speech-to-text backend and two streaming fixes. See
+[About This Fork](#about-this-fork) for the exact differences. Everything else
+below is the upstream operator manual, kept in sync.
 
 Telegram AI Agent is an open-source Telegram bot for controlling Claude Code and
 Codex CLI on your VPS. It turns Telegram into a remote interface for agentic
@@ -11,6 +17,53 @@ UI when the agent needs input.
 The repository contains the reusable public bot runtime only. It does not
 contain private assistant data, private prompts, runtime state, real IDs,
 tokens, or machine-specific deployment config.
+
+## About This Fork
+
+Branches:
+
+- `main-fork` (default): upstream plus the changes listed here.
+- `main`: untouched mirror of upstream, used for rebasing and for sending
+  fixes back.
+
+Differences from upstream:
+
+### Local speech-to-text instead of Deepgram
+
+Upstream transcribes voice messages only through Deepgram, so voice notes need a
+paid cloud account and leave your machine. This fork adds `STT_URL`: when set,
+voice messages are posted to any OpenAI-compatible
+`/v1/audio/transcriptions` endpoint, for example
+[speaches](https://github.com/speaches-ai/speaches) running faster-whisper on
+the same host or LAN. `STT_MODEL` selects the model name sent to that server.
+Deepgram remains the fallback when `STT_URL` is empty, so existing installs
+keep working unchanged.
+
+Why it is better: voice works fully offline and for free, audio never leaves
+your network, and any Whisper-class model can be swapped in. The local timeout
+is 120 seconds to accommodate CPU inference. Current limitation: the request
+language is hard-coded to `ru`; change it in
+`src/telegram_bot/core/services/transcriber.py` if you speak to the bot in
+another language.
+
+### `stream_mode` is honoured in subprocess mode
+
+In upstream, the subprocess path calls the streaming handler without the topic
+config, so the mode resolver silently falls back to `verbose`. Setting
+`/stream live` in a topic had no effect: every tool event still arrived as a
+separate message. The fork passes the topic config through, so `live` and
+`minimal` behave as documented.
+
+### No duplicated final answer
+
+Claude's `stream-json` output repeats the last assistant text inside the final
+`result` event. Upstream sends both, so every subprocess answer arrived twice.
+The fork compares the two and skips the second send when the text is
+identical, while still recording the first message's IDs so reply-to-resume
+keeps working.
+
+Both streaming fixes are upstream bugs and are candidates for pull requests
+back to the original project.
 
 ## What You Can Do
 
@@ -85,7 +138,8 @@ You need a Linux machine or VPS where the bot and agent CLIs will run.
 - Claude Code CLI and/or Codex CLI installed for the same Linux user that runs
   the bot
 - `tmux` for persistent development sessions
-- Optional: Deepgram API key for voice transcription
+- Optional: a local OpenAI-compatible STT server (`STT_URL`) or a Deepgram API
+  key for voice transcription
 
 The bot can run with only one agent CLI installed. It prefers Claude Code by
 default, but if Claude Code is missing and Codex is available, a topic can run
@@ -109,7 +163,7 @@ authenticated or configured for the same Linux user that will run the bot.
 If you already have Claude Code or Codex on the VPS, this is the easiest path.
 
 ```bash
-git clone https://github.com/pavel-molyanov/telegram-ai-agent.git
+git clone https://github.com/niklzz/telegram-ai-agent.git
 cd telegram-ai-agent
 uv sync
 ```
@@ -144,7 +198,7 @@ whether to install a systemd service.
 Clone and install:
 
 ```bash
-git clone https://github.com/pavel-molyanov/telegram-ai-agent.git
+git clone https://github.com/niklzz/telegram-ai-agent.git
 cd telegram-ai-agent
 uv sync
 cp .env.example .env
@@ -158,6 +212,8 @@ Edit `.env`:
 TELEGRAM_BOT_TOKEN=replace-with-botfather-token
 ALLOWED_USER_IDS=[123456789]
 BOT_LANG=en
+STT_URL=
+STT_MODEL=deepdml/faster-whisper-large-v3-turbo-ct2
 DEEPGRAM_API_KEY=
 PROJECT_ROOT=.
 APP_ROOT=
@@ -184,7 +240,12 @@ Notes:
   first contains installed code and MCP launchers; the second contains editable
   projects, topic config, session mappings, tmux state, and downloaded files.
 - `DEFAULT_CWD`: default working directory for unconfigured topics.
-- `DEEPGRAM_API_KEY`: leave empty if you do not need voice messages.
+- `STT_URL`: base URL of a local OpenAI-compatible transcription server, for
+  example `http://127.0.0.1:8000`. When set, it takes precedence over Deepgram.
+- `STT_MODEL`: model name passed to that server. The default matches the
+  speaches faster-whisper large-v3-turbo build.
+- `DEEPGRAM_API_KEY`: cloud fallback when `STT_URL` is empty. Leave both empty
+  if you do not need voice messages.
 - `CODEX_AUTO_UPDATE_ENABLED`: enables automatic and manual Codex updates.
   Timeout bounds every update; cooldown applies only to automatic updates.
 
@@ -341,7 +402,9 @@ topics, because they need a topic-specific config entry.
 
 Human-readable intermediate updates remain separate messages in every mode.
 The normalized final answer is always sent as one separate logical response.
-`live` is the best default for most project work.
+In subprocess mode, if the final answer is identical to the last streamed text
+message, that message is reused instead of being sent again. `live` is the best
+default for most project work.
 
 ## TUI Mode
 
@@ -535,10 +598,11 @@ PYTHONDONTWRITEBYTECODE=1 uv run python -c "import telegram_bot; import telegram
 
 ## Feedback
 
-Issues, bug reports, and ideas are welcome. Open a GitHub issue if something is
-unclear, broken, or missing.
+For the fork-specific changes (local STT, streaming fixes), open an issue in
+[niklzz/telegram-ai-agent](https://github.com/niklzz/telegram-ai-agent). For
+everything else, the upstream project is the right place.
 
-Made by Pasha Molyanov. I write about business, AI assistants, development, and
+The original project is made by Pasha Molyanov. I write about business, AI assistants, development, and
 launching useful services in my Telegram channel:
 [@molyanov_blog](https://t.me/+zJ5qmSsoYediYzdi). My website:
 [molyanov.ru](https://molyanov.ru).
