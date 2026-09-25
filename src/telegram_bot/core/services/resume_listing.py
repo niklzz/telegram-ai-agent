@@ -14,6 +14,8 @@ from telegram_bot.core.tui.paths import _CODEX_SESSION_ID_RE, _SESSION_ID_RE, cw
 EngineName = Literal["claude", "codex"]
 _SOFT_CAP_BYTES = 64 * 1024
 _PREVIEW_LIMIT = 60
+# The VS Code extension writes the same rollouts as the TUI; `codex exec` ones are the bot's.
+_CODEX_ORIGINATORS = {"codex-tui", "codex_vscode"}
 
 
 @dataclass(frozen=True)
@@ -141,6 +143,59 @@ def get_last_assistant_message(provider: EngineName, transcript_path: Path) -> s
     return None
 
 
+def get_recent_exchanges(
+    provider: EngineName, transcript_path: Path, limit: int = 3
+) -> list[tuple[str, str]]:
+    """Last ``limit`` (prompt, final answer) pairs of a transcript, oldest first.
+
+    Tool calls, thinking, tool results and sidechains are skipped; the newest
+    assistant text of a turn counts as its answer ("" while none yet).
+    """
+    pairs: list[tuple[str, str]] = []
+    answer = ""
+    for data in _iter_jsonl_tail(transcript_path, cap_bytes=1024 * 1024):
+        role, text = _exchange_row(provider, data)
+        if role == "assistant" and not answer:
+            answer = text
+        elif role == "user":
+            pairs.append((text, answer))
+            answer = ""
+            if len(pairs) == limit:
+                break
+    return pairs[::-1]
+
+
+def _exchange_row(provider: EngineName, data: object) -> tuple[str, str]:
+    """Return (role, text) for a prompt or an answer row, ("", "") for everything else."""
+    if not isinstance(data, dict):
+        return "", ""
+    if provider == "codex":
+        payload = data.get("payload")
+        if data.get("type") != "event_msg" or not isinstance(payload, dict):
+            return "", ""
+        text = payload.get("message")
+        if not isinstance(text, str) or not text.strip():
+            return "", ""
+        kind = str(payload.get("type"))
+        return {"user_message": "user", "agent_message": "assistant"}.get(kind, ""), text.strip()
+    role = str(data.get("type"))
+    if role not in {"user", "assistant"} or data.get("isSidechain") or data.get("isMeta"):
+        return "", ""
+    message = data.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    items = [content] if isinstance(content, str) else content or []
+    # VS Code wraps context in tags (<ide_selection>, <system-reminder>…) — not the prompt.
+    parts = [
+        item["text"].strip()
+        for item in items
+        if isinstance(item, dict) and isinstance(item.get("text"), str)
+    ] + [item.strip() for item in items if isinstance(item, str)]
+    text = "\n".join(p for p in parts if p and not (p.startswith("<") and p.endswith(">")))
+    if not text or (role == "user" and not _meaningful_preview(text)):
+        return "", ""
+    return role, text
+
+
 def _last_claude_assistant_message(path: Path) -> str | None:
     for data in _iter_jsonl_tail(path):
         if not isinstance(data, dict) or data.get("type") != "assistant":
@@ -200,7 +255,7 @@ def _codex_meta(path: Path, *, max_records: int = 3) -> tuple[str, str] | None:
         if not isinstance(data, dict) or data.get("type") != "session_meta":
             continue
         payload = data.get("payload")
-        if not isinstance(payload, dict) or payload.get("originator") != "codex-tui":
+        if not isinstance(payload, dict) or payload.get("originator") not in _CODEX_ORIGINATORS:
             continue
         source = payload.get("source")
         if isinstance(source, dict) and "subagent" in source:

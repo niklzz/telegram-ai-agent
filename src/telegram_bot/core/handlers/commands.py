@@ -39,6 +39,7 @@ from telegram_bot.core.services.resume_listing import (
     SessionEntry,
     _same_cwd,
     get_last_assistant_message,
+    get_recent_exchanges,
     list_sessions,
 )
 from telegram_bot.core.services.telegram_utils import send_html_with_fallback
@@ -52,7 +53,7 @@ from telegram_bot.core.services.topic_config import (
 )
 from telegram_bot.core.services.topic_runtime import BotDefaults, resolve_topic_runtime_config
 from telegram_bot.core.types import ChannelKey, channel_key
-from telegram_bot.core.utils.telegram_html import split_html_message
+from telegram_bot.core.utils.telegram_html import markdown_to_html, split_html_message
 
 logger = logging.getLogger(__name__)
 
@@ -687,6 +688,74 @@ async def _switch_topic_engine(topic_config: TopicConfig, thread_id: int, engine
         if models
         else topic_config.update_engine_model(thread_id, engine, None)
     )
+
+
+# Younger transcript = the session is probably still open on the Mac / in VS Code.
+_CONTINUE_BUSY_SEC = 120
+
+
+@router.message(Command("continue"))
+@router.message(F.text == t("ui.btn_continue"))
+async def handle_continue(
+    message: Message,
+    session_manager: SessionManager,
+    topic_config: TopicConfig,
+    bot_defaults: BotDefaults,
+) -> None:
+    """Switch the topic to the newest session of its cwd (Mac, box, VS Code) and show its tail."""
+    key = channel_key(message)
+    if key[1] is None:
+        await message.answer(t("ui.resume_not_in_forum"))
+        return
+    runtime = resolve_topic_runtime_config(topic_config.get_topic(key[1]), bot_defaults)
+    if runtime.exec_mode != "subprocess":
+        # ponytail: tmux topics keep /resume — their switch needs a live TUI respawn.
+        await message.answer(t("ui.continue_tmux"))
+        return
+    entries = await asyncio.to_thread(list_sessions, runtime.cwd)
+    if not entries:
+        await message.answer(t("ui.resume_no_sessions"))
+        return
+    entry = entries[0]
+    if entry.provider != runtime.engine and not await _switch_topic_engine(
+        topic_config, key[1], entry.provider
+    ):
+        await message.answer(t("ui.resume_config_write_failed"))
+        return
+    await session_manager.resume_session(key, entry.session_id, entry.provider)
+
+    exchanges = await asyncio.to_thread(get_recent_exchanges, entry.provider, entry.transcript_path)
+    text = t(
+        "ui.continue_done",
+        engine=engine_display_name(entry.provider),
+        age=_format_age(entry.mtime),
+        sid=html.escape(entry.session_id[:8]),
+    )
+    if time.time() - entry.mtime < _CONTINUE_BUSY_SEC:
+        text += "\n" + t("ui.continue_busy")
+    for prompt, answer in exchanges:
+        text += f"\n\n👤 <i>{html.escape(_clip(prompt, 400))}</i>"
+        if answer:
+            text += f"\n🤖 {markdown_to_html(_clip(answer, 1500))}"
+    text += "\n\n" + t("ui.resume_done_next")
+
+    for chunk in split_html_message(text):
+
+        async def _send_html(c: str = chunk) -> object:
+            return await message.answer(c, parse_mode="HTML")
+
+        async def _send_plain(c: str = chunk) -> object:
+            return await message.answer(c)
+
+        outcome = await send_html_with_fallback(
+            send_html=_send_html, send_plain=_send_plain, label=f"continue {key}"
+        )
+        if outcome.fatal:
+            return
+
+
+def _clip(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
 @router.callback_query(F.data.startswith("rs:cancel:"))

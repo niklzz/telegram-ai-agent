@@ -176,6 +176,12 @@ MESSAGES: dict[str, dict[str, str]] = {
         "ui.resume_current_marker": "current",
         "ui.resume_done": "✅ Switched to session {n} · {engine} · {age} · <code>{sid}</code>",
         "ui.resume_done_next": "Your next message continues it.",
+        "ui.continue_done": "▶️ Latest session · {engine} · {age} ago · <code>{sid}</code>",
+        "ui.continue_busy": (
+            "⚠️ It changed just now — if it is still open on the Mac, close it there, "
+            "otherwise the history forks. Back at the Mac, reopen it via /resume."
+        ),
+        "ui.continue_tmux": "⚠️ /continue works in subprocess topics; here use /resume",
         "ui.resume_engine_switched": "↪️ Switching engine to <code>{engine}</code>",
         "ui.resume_picker_stale": "List is stale, open /resume again",
         "ui.resume_spawn_failed": "Failed to start tmux. The next message will start fresh.",
@@ -205,6 +211,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "ui.btn_new_chat": "New chat",
         "ui.btn_cancel": "Cancel ❌",
         "ui.btn_tui": "TUI 🖥",
+        "ui.btn_continue": "Continue ▶️",
         # --- CC content prefixes (injected into prompts) --------------
         "cc.voice_label": "Voice",
         "cc.videomessage_label": "Video message",
@@ -447,6 +454,12 @@ MESSAGES: dict[str, dict[str, str]] = {
         "ui.resume_current_marker": "текущая",
         "ui.resume_done": "✅ Переключился на сессию {n} · {engine} · {age} · <code>{sid}</code>",
         "ui.resume_done_next": "Следующее сообщение продолжит её.",
+        "ui.continue_done": "▶️ Последняя сессия · {engine} · {age} назад · <code>{sid}</code>",
+        "ui.continue_busy": (
+            "⚠️ Она менялась только что — если открыта на маке, закрой её там, "
+            "иначе история раздвоится. Вернувшись к маку, открой её через /resume."
+        ),
+        "ui.continue_tmux": "⚠️ /continue работает в subprocess-топиках; здесь — /resume",
         "ui.resume_engine_switched": "↪️ Переключаю движок на <code>{engine}</code>",
         "ui.resume_picker_stale": "Список устарел, открой /resume заново",
         "ui.resume_spawn_failed": (
@@ -477,6 +490,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "ui.btn_new_chat": "Новый чат",
         "ui.btn_cancel": "Отменить ❌",
         "ui.btn_tui": "TUI 🖥",
+        "ui.btn_continue": "Продолжить ▶️",
         # CC content prefixes are intentionally English-only — see MESSAGES["en"].
         # --- Queue messages -------------------------------------------
         "ui.queue_added_batch": "Добавлено в батч, он №{position} в очереди",

@@ -18,7 +18,7 @@ _TELEGRAM_BUTTON_TEXT_LIMIT = 64
 
 
 def topic_keyboard() -> ReplyKeyboardMarkup:
-    """Reply keyboard with new chat, cancel, and a TUI-snapshot shortcut.
+    """Reply keyboard with new chat, cancel, a TUI-snapshot and a /continue shortcut.
     The TUI button sends the i18n text `t("ui.btn_tui")` (e.g. "TUI 🖥");
     `handle_tui_button` in `handlers/tail.py` listens for that exact text
     and forwards to `handle_tail_command`, so the user gets the same
@@ -30,6 +30,7 @@ def topic_keyboard() -> ReplyKeyboardMarkup:
                 KeyboardButton(text=t("ui.btn_new_chat")),
                 KeyboardButton(text=t("ui.btn_cancel")),
                 KeyboardButton(text=t("ui.btn_tui")),
+                KeyboardButton(text=t("ui.btn_continue")),
             ],
         ],
         is_persistent=True,
