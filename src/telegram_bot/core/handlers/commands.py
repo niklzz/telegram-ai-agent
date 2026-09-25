@@ -146,6 +146,30 @@ def _resume_caption(
     return "\n\n".join([text, *blocks])
 
 
+def _resume_done_text(entry: SessionEntry, idx: int, *, engine_changed: bool) -> str:
+    """Confirmation after a pick: which session, and that the next message goes there."""
+    text = t(
+        "ui.resume_done",
+        n=idx + 1,
+        engine=engine_display_name(entry.provider),
+        age=_format_age(entry.mtime),
+        sid=html.escape(entry.session_id[:8]),
+    )
+    if entry.preview:
+        text += f"\n<i>{html.escape(entry.preview)}</i>"
+    if engine_changed:
+        text += "\n" + t("ui.resume_engine_switched", engine=entry.provider)
+    return text + "\n\n" + t("ui.resume_done_next")
+
+
+def _current_session_id(
+    key: ChannelKey, exec_mode: str, tmux_manager: TmuxManager, session_manager: SessionManager
+) -> str | None:
+    if exec_mode == "subprocess":
+        return session_manager.get_current_session_id(key)
+    return tmux_manager.get_active_session_id(key)
+
+
 @router.message(CommandStart())
 async def handle_start(message: Message) -> None:
     logger.debug("User %s started the bot", message.from_user and message.from_user.id)
@@ -415,7 +439,7 @@ async def handle_resume(
         )
     )
     total_pages = max(1, math.ceil(len(entries) / 8))
-    current_session_id = tmux_manager.get_active_session_id(key)
+    current_session_id = _current_session_id(key, runtime.exec_mode, tmux_manager, session_manager)
     await message.answer(
         _resume_caption(
             runtime.cwd,
@@ -498,6 +522,9 @@ async def on_resume_page(
     callback: CallbackQuery,
     picker_store: PickerStore,
     tmux_manager: TmuxManager,
+    session_manager: SessionManager,
+    topic_config: TopicConfig,
+    bot_defaults: BotDefaults,
 ) -> None:
     if callback.data is None or callback.message is None:
         await callback.answer()
@@ -522,6 +549,10 @@ async def on_resume_page(
         return
     total_pages = max(1, math.ceil(len(state.entries) / 8))
     page = max(0, min(page, total_pages - 1))
+    runtime = resolve_topic_runtime_config(topic_config.get_topic(state.thread_id), bot_defaults)
+    current_session_id = _current_session_id(
+        (state.chat_id, state.thread_id), runtime.exec_mode, tmux_manager, session_manager
+    )
     try:
         await callback.message.edit_text(
             _resume_caption(
@@ -529,12 +560,12 @@ async def on_resume_page(
                 page=page,
                 total_pages=total_pages,
                 entries=state.entries,
-                current_session_id=tmux_manager.get_active_session_id(key),
+                current_session_id=current_session_id,
             ),
             reply_markup=resume_keyboard(
                 state.entries,
                 page=page,
-                current_session_id=tmux_manager.get_active_session_id(key),
+                current_session_id=current_session_id,
                 token=token,
             ),
             parse_mode="HTML",
@@ -589,6 +620,31 @@ async def on_resume_pick(
         return
 
     await _answer_callback_safely(callback, t("ui.resume_starting"))
+    if runtime.exec_mode == "subprocess":
+        # Subprocess topics resume by session id alone (`claude --resume` / `codex exec resume`
+        # on the next message); upstream silently flipped the topic to tmux instead.
+        thread_id = state.thread_id
+        assert thread_id is not None  # the picker exists only in forum topics
+        engine_changed = entry.provider != runtime.engine
+        if engine_changed and not await _switch_topic_engine(
+            topic_config, thread_id, entry.provider
+        ):
+            await callback.message.edit_text(t("ui.resume_config_write_failed"), reply_markup=None)
+            return
+        await session_manager.resume_session(
+            (state.chat_id, state.thread_id), entry.session_id, entry.provider
+        )
+        picker_store.drop(token)
+        await callback.message.edit_text(
+            _resume_done_text(entry, idx, engine_changed=engine_changed),
+            reply_markup=None,
+            parse_mode="HTML",
+        )
+        await _replay_last_assistant_message(
+            callback.message, entry, (state.chat_id, state.thread_id), session_manager
+        )
+        return
+
     result = await tmux_manager.switch_or_start_session(
         key,
         entry.session_id,
@@ -619,12 +675,18 @@ async def on_resume_pick(
         await _replay_last_assistant_message(callback.message, entry, key, session_manager)
         return
 
-    message_key = "ui.resume_switched" if result.kind == "switched" else "ui.resume_started"
-    text = t(message_key, sid=entry.session_id[:8])
-    if result.engine_changed:
-        text += "\n" + t("ui.resume_engine_switched", engine=entry.provider)
+    text = _resume_done_text(entry, idx, engine_changed=result.engine_changed)
     await callback.message.edit_text(text, reply_markup=None, parse_mode="HTML")
     await _replay_last_assistant_message(callback.message, entry, key, session_manager)
+
+
+async def _switch_topic_engine(topic_config: TopicConfig, thread_id: int, engine: Engine) -> bool:
+    models = topic_config.get_topic(thread_id).models
+    return await (
+        topic_config.update_engine(thread_id, engine)
+        if models
+        else topic_config.update_engine_model(thread_id, engine, None)
+    )
 
 
 @router.callback_query(F.data.startswith("rs:cancel:"))

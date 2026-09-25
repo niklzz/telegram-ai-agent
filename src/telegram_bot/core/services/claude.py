@@ -1264,6 +1264,18 @@ class SessionManager:
             session.session_id = session_id
         logger.info("Override session for channel %s: session_id=%s", channel_key, session_id)
 
+    async def resume_session(self, channel_key: ChannelKey, session_id: str, provider: str) -> None:
+        """Point a subprocess channel at a saved transcript (/resume) and persist it."""
+        session = self._get_session(channel_key)
+        async with session.lock:
+            session.session_id = session_id
+            session.engine = provider
+        ch_key = self._ch_key(channel_key)
+        self._channel_sessions[ch_key] = self._session_ref(provider, session_id, session.model)
+        self._save_channel_sessions()
+        self._fresh_channels.discard(ch_key)  # /clear's "ignore reply" guard must not undo this
+        logger.info("Resume %s: provider=%s session_id=%s", channel_key, provider, session_id)
+
     def get_current_session_id(self, channel_key: ChannelKey) -> str | None:
         """Get the current session_id for a channel, or None if no session."""
         if channel_key not in self._sessions:
