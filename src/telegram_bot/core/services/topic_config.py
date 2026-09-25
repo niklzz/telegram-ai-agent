@@ -96,6 +96,8 @@ class TopicSettings:
     engine: Engine = _DEFAULT_ENGINE
     model: str | None = None
     models: dict[Engine, str] = field(default_factory=dict)
+    # Prepended to the first message of a new session. "" = nothing.
+    prompt: str = ""
 
 
 def _default_topic() -> TopicSettings:
@@ -124,6 +126,7 @@ class TopicConfig:
         self._last_mtime: int = 0
         self._topics: dict[int, TopicSettings] = {}
         self._routing: dict[str, int] = {}
+        self._default_prompt = ""
         # Serializes external writes to topic_config.json. Concurrent with the
         # forum_topic handler's own lock — fine, both use atomic os.replace so
         # the worst case is one write clobbering another, not corruption.
@@ -172,6 +175,12 @@ class TopicConfig:
         """Parse raw JSON dict into typed internal structures."""
         topics: dict[int, TopicSettings] = {}
         routing: dict[str, int] = {}
+        # Top-level "prompt" applies to every topic without its own "prompt".
+        raw_default_prompt = raw.get("prompt", "")
+        if not isinstance(raw_default_prompt, str):
+            logger.warning("Invalid top-level prompt %r, dropping", raw_default_prompt)
+            raw_default_prompt = ""
+        default_prompt = raw_default_prompt
 
         # Parse topics
         raw_topics = raw.get("topics", {})
@@ -316,6 +325,13 @@ class TopicConfig:
                         thread_id,
                     )
 
+                prompt = value.get("prompt", default_prompt)
+                if not isinstance(prompt, str):
+                    logger.warning(
+                        "Invalid prompt %r for topic %d, using default", prompt, thread_id
+                    )
+                    prompt = default_prompt
+
                 topics[thread_id] = TopicSettings(
                     name=name,
                     type=topic_type,
@@ -327,6 +343,7 @@ class TopicConfig:
                     engine=engine,
                     model=model,
                     models=models,
+                    prompt=prompt,
                 )
 
         # Parse routing
@@ -340,13 +357,16 @@ class TopicConfig:
 
         self._topics = topics
         self._routing = routing
+        self._default_prompt = default_prompt
 
     def get_topic(self, thread_id: int | None) -> TopicSettings:
         """Return settings for a thread_id. Unknown/None returns defaults."""
         self._maybe_reload()
-        if thread_id is None:
-            return _default_topic()
-        return self._topics.get(thread_id, _default_topic())
+        topic = self._topics.get(thread_id) if thread_id is not None else None
+        if topic is None:
+            topic = _default_topic()
+            topic.prompt = self._default_prompt
+        return topic
 
     def get_routing(self, notification_type: str) -> int | None:
         """Return thread_id for a notification type, or None if not configured."""

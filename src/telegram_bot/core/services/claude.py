@@ -42,7 +42,6 @@ from telegram_bot.core.services.cc_modes import (
     TASK_MODE_PROMPT,
     TASK_MODE_TOOLS,
     Mode,
-    _get_mode_prompt,
 )
 from telegram_bot.core.services.codex_mcp import (
     build_codex_mcp_config_args,
@@ -432,11 +431,7 @@ class SessionManager:
             # are not misinterpreted as unknown CLI flags.
             return [*base, "--resume", session_id, "-p", "--", prompt]
 
-        tg_context = self._build_tg_context(
-            chat_id, thread_id, cwd_configured=self._is_cwd_configured(thread_id)
-        )
-        full_prompt = _get_mode_prompt(mode) + tg_context + prompt
-        return [*base, "-p", full_prompt]
+        return [*base, "-p", "--", self._with_topic_prompt(thread_id, prompt)]
 
     def _build_full_prompt(
         self,
@@ -449,10 +444,14 @@ class SessionManager:
         """Build the actual prompt text sent to an engine."""
         if session_id:
             return prompt
-        tg_context = self._build_tg_context(
-            chat_id, thread_id, cwd_configured=self._is_cwd_configured(thread_id)
-        )
-        return _get_mode_prompt(mode) + tg_context + prompt
+        return self._with_topic_prompt(thread_id, prompt)
+
+    def _with_topic_prompt(self, thread_id: int | None, prompt: str) -> str:
+        """Prepend the topic's configured `prompt` (topic_config.json); none by default."""
+        if self._topic_config is None:
+            return prompt
+        extra = self._topic_config.get_topic(thread_id).prompt.strip()
+        return f"{extra}\n\n{prompt}" if extra else prompt
 
     def _build_exec_command(self, prompt: str, session: SessionData) -> ExecCommand:
         """Provider-aware subprocess command.
@@ -609,41 +608,6 @@ class SessionManager:
         if Path(mcp_path).exists():
             cmd.extend(["--mcp-config", mcp_path, "--strict-mcp-config"])
         return cmd
-
-    def _is_cwd_configured(self, thread_id: int | None) -> bool:
-        """True iff the topic doesn't need setup: assistant type (no cwd needed) or cwd is set."""
-        if thread_id is None or self._topic_config is None:
-            return True  # no topic concept → no setup hint
-        topic = self._topic_config.get_topic(thread_id)
-        if topic.type == "assistant":
-            return True  # assistant topics intentionally have no cwd
-        return topic.cwd is not None
-
-    @staticmethod
-    def _build_tg_context(
-        chat_id: int, thread_id: int | None = None, cwd_configured: bool = True
-    ) -> str:
-        """Build <telegram-context> block with chat_id, thread_id, and optional setup hint.
-
-        When cwd_configured is False (the topic has no cwd in topic_config.json yet),
-        an explicit setup instruction is appended so CC always sees it on the first
-        message in an unconfigured thread — no reliance on skill auto-discovery.
-        """
-        if not chat_id:
-            return ""
-        lines = [f"chat_id: {chat_id}"]
-        if thread_id is not None:
-            lines.append(f"thread_id: {thread_id}")
-        if not cwd_configured:
-            lines.extend(
-                [
-                    "",
-                    "This topic is not yet configured (cwd is null in topic_config.json).",
-                    "Use the repository `topic-setup` skill/instructions to figure out "
-                    "which project to link, verify the path, and update topic_config.json.",
-                ]
-            )
-        return "\n<telegram-context>\n" + "\n".join(lines) + "\n</telegram-context>\n\n"
 
     async def _run_cc_stream(
         self,
