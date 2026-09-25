@@ -4,7 +4,9 @@
 
 This is a fork of
 [pavel-molyanov/telegram-ai-agent](https://github.com/pavel-molyanov/telegram-ai-agent)
-with a local speech-to-text backend and two streaming fixes. See
+with a local speech-to-text backend, two streaming fixes, a configurable topic
+prompt, and features for switching between computer and phone: project folders
+as topics, `/continue`, and new-session posts. See
 [About This Fork](#about-this-fork) for the exact differences. Everything else
 below is the upstream operator manual, kept in sync.
 
@@ -65,6 +67,39 @@ keeps working.
 Both streaming fixes are upstream bugs and are candidates for pull requests
 back to the original project.
 
+### Nothing is prepended to your messages by default
+
+Upstream glued `prompts/default.md` and a `<telegram-context>` block (chat and
+thread ids plus a setup hint) onto the first message of every session, and
+changing that meant editing tracked files. The fork prepends nothing unless you
+set `prompt` in `topic_config.json`: top level for all topics, per topic to
+override, `""` to switch it off. It works the same for Claude Code and Codex and
+is picked up without a restart. `mode` still selects the tool policy. See
+[Prompt Modes](#prompt-modes).
+
+### `/resume` keeps subprocess topics in subprocess mode
+
+In upstream, picking a session with `/resume` silently switched the topic to
+`tmux`. The fork points a `subprocess` topic at the picked session and the next
+message continues it, marks the current session in the picker and says which
+one was picked. Codex sessions from the VS Code extension are listed too.
+
+### Working from the computer and the phone
+
+- `PROJECT_TOPICS_DIR`: every subfolder of a projects folder gets its own forum
+  topic with `cwd` set, and a removed folder deletes its topic, with guards for
+  an unmounted disk.
+- `/continue` and the **Continue ▶️** button: switch the topic to the newest
+  session of its folder, from any engine or client, and show the last exchanges.
+- `ANNOUNCE_NEW_SESSIONS`: the first prompt of a session started in a terminal
+  or IDE is posted silently to its topic, so the topic is at the top when you
+  pick up the phone, and a reply continues that session.
+
+Why: with many project topics, finding and continuing the right conversation
+from the phone took longer than the task itself. Details, the way back to the
+computer, and limitations are in
+[Project Folders And Session Handoff](#project-folders-and-session-handoff).
+
 ## What You Can Do
 
 - Run Claude Code or Codex from Telegram private chats or group forum topics.
@@ -75,11 +110,21 @@ back to the original project.
 - Use a persistent `tmux` session for real development work, or a short-lived
   subprocess for simple one-off tasks.
 - Send text, photos, documents, forwarded message batches, Telegram rich
-  messages, and optional voice messages.
-- Customize the bundled example prompt for a second workflow.
+  messages, and optional voice messages (Deepgram or a local
+  OpenAI-compatible speech-to-text server).
+- Add your own text to the first message of new sessions with an optional
+  `prompt`, globally or per topic; by default nothing is prepended.
 - Open a live TUI snapshot with `/tui` and press buttons for Enter, Esc, arrows,
   digits, refresh, and close.
-- Resume saved sessions by replying to previous bot messages or with `/resume`.
+- Resume saved sessions by replying to previous bot messages or with `/resume`,
+  in both `tmux` and `subprocess` topics.
+- Pick up on your phone where you stopped at the computer: `/continue` (or the
+  **Continue ▶️** button) switches the topic to the newest Claude or Codex
+  session of its folder, including sessions started in a terminal or an IDE.
+- Mirror a projects folder as forum topics: every subfolder gets its own topic,
+  a removed folder loses it.
+- Get a silent post with the first prompt of every new session started outside
+  the bot, so the right topic is at the top of the list when you need it.
 - Restart a stuck topic runtime with `/recycle` and inspect MCP runtime process
   health with `/mcpstatus`.
 - Let the agent send messages, images, image galleries, and documents back to
@@ -246,6 +291,12 @@ Notes:
   speaches faster-whisper large-v3-turbo build.
 - `DEEPGRAM_API_KEY`: cloud fallback when `STT_URL` is empty. Leave both empty
   if you do not need voice messages.
+- `NOTIFICATION_CHAT_ID`: the forum group used by `PROJECT_TOPICS_DIR` and
+  `ANNOUNCE_NEW_SESSIONS`; both stay off without it.
+- `PROJECT_TOPICS_DIR`: optional absolute folder whose subfolders become forum
+  topics, see [Project Folders And Session Handoff](#project-folders-and-session-handoff).
+- `ANNOUNCE_NEW_SESSIONS`: `true` to post the first prompt of sessions started
+  outside the bot to their topic. Default `false`.
 - `CODEX_AUTO_UPDATE_ENABLED`: enables automatic and manual Codex updates.
   Timeout bounds every update; cooldown applies only to automatic updates.
 
@@ -330,11 +381,24 @@ Fields:
 - `exec_mode`: `tmux` or `subprocess`.
 - `engine`: `claude` or `codex`.
 - `model`: legacy single model override, or `null`.
+- `prompt`: optional text prepended to the first message of a new session in
+  this topic. Overrides the top-level `prompt`; `""` disables it.
+- `announce`: `false` stops new-session posts for this topic (default `true`).
 - `models`: optional per-engine overrides keyed by `claude` and/or `codex`.
   Resolution is `models[active_engine]`, then `model`, then the provider
   default; manual `/engine` changes preserve the map. During automatic
   missing-CLI fallback, the first fallback request uses the provider default;
   the saved per-engine override applies from the next request.
+
+Top-level keys next to `topics`:
+
+- `prompt`: default text for every topic without its own `prompt`, including
+  private chats. Missing or `""` means nothing is prepended.
+- `project_topics_ignore`: folder names that `PROJECT_TOPICS_DIR` must not turn
+  into topics.
+
+The bot re-reads the file on change, no restart needed. New prompt text applies
+to new sessions (after `/clear`); running sessions keep what they started with.
 
 Use absolute paths for `cwd` and `mcp_config`. Keep `mcp_config` as `null` by
 default. Use a project MCP config only after checking it for secrets and private
@@ -343,18 +407,17 @@ Do not commit your real `topic_config.json`.
 
 ## Prompt Modes
 
-Prompt files live in `src/telegram_bot/prompts/`.
+The config field `mode` selects the tool policy of a topic:
 
-Public modes:
+- `free`: the default general/project tool set.
+- `task`: a small task-management example with a restricted tool whitelist.
 
-- `free`: the default general/project prompt, backed by `default.md`.
-- `task`: a small replaceable task-management example, backed by
-  `task-manager.md`.
-
-For no-code customization, edit or replace `task-manager.md` and keep
-`"mode": "task"` in selected topics. A new mode name requires code changes to
-the runtime resolver and an explicit tool policy, plus tests; a prompt file
-alone is not a complete mode. Keep private data, secrets, personal workflows,
+The bot no longer prepends mode prompt files or a `<telegram-context>` block to
+your messages. If the agent needs standing instructions, put them into the
+`prompt` field of `topic_config.json` (see [Topic Configuration](#topic-configuration)).
+It is used in `subprocess` topics for both Claude Code and Codex; `tmux` topics
+do not apply it yet. A new mode name requires code changes to the runtime
+resolver and an explicit tool policy, plus tests. Keep private data, secrets, personal workflows,
 and real customer context out of the public repository.
 
 ## Execution Modes
@@ -386,7 +449,9 @@ Use `subprocess` for short tasks.
 
 Each message starts a fresh CLI process, receives the answer, and exits. This is
 good for simple questions, notes, small transformations, and tasks where you do
-not want a persistent TUI session running in the background.
+not want a persistent TUI session running in the background. The topic still
+keeps its session between messages, and `/resume` and `/continue` switch it
+to another saved session without starting tmux.
 
 Private chats use default settings and are good for simple use. Per-topic
 controls such as `/mode`, `/stream`, `/engine`, and `/resume` work in forum
@@ -435,11 +500,14 @@ old bot message, the bot can route your new message back to the matching
 session. This is useful when one Telegram topic has multiple historical
 sessions.
 
-In tmux mode, `/resume` shows saved sessions for the topic working directory and
-lets you switch back to one of them. If the target session belongs to a
-different engine or execution mode, the bot can switch the topic settings
-before resuming. If a live tmux session must be replaced, it can be stopped as
-part of that switch.
+`/resume` shows saved sessions for the topic working directory, newest first,
+marks the current one, and lets you switch back to one of them. Sessions
+started outside the bot are listed too: Claude Code and Codex in a terminal or
+in the VS Code extension. If the target session belongs to a different engine,
+the bot switches the topic engine first. In a `subprocess` topic the pick only
+changes which session the next message continues. In a `tmux` topic the bot
+can also switch execution mode, and a live tmux session that must be replaced
+is stopped as part of the switch.
 
 Slash commands are special in tmux topics: non-bot commands such as `/model` or
 `/compact` are sent to the live TUI, not to the replied-to historical session.
@@ -447,6 +515,58 @@ Slash commands are special in tmux topics: non-bot commands such as `/model` or
 `/clear` starts fresh logical context for the current topic. In tmux mode the
 bot resets or respawns the tmux session depending on the current state. `/new`
 still exists as a legacy alias, but `/clear` is the command shown in the menu.
+
+## Project Folders And Session Handoff
+
+These features are for people who work on the same projects from a computer
+and from the phone. They need a forum group in `NOTIFICATION_CHAT_ID` and a
+bot that runs on the machine where the agent history lives (`~/.claude/projects`,
+`~/.codex/sessions`).
+
+**Topics from folders.** With `PROJECT_TOPICS_DIR=/home/user/projects`, every
+subfolder gets a topic with `cwd` set to it: at startup (folders created while
+the bot was down are caught up) and then every minute. Folders starting with
+`.`, `#` or `@` and names in `project_topics_ignore` are skipped. Topics are
+matched by `cwd`, not by name, so renaming a topic is safe and a topic deleted in
+Telegram is not recreated (its entry stays in `topic_config.json`; remove the
+entry to get the topic back).
+
+When a folder disappears, its topic is deleted **together with its message
+history**. To survive an unmounted or half-synced disk, nothing is deleted when
+the folder is empty, and a pass that would delete more than 3 topics only logs a
+warning. Renaming a folder therefore means a new topic and a deleted old one.
+
+**Continue on the phone.** `/continue` or the **Continue ▶️** keyboard button
+switches a `subprocess` topic to the newest session of its folder, whichever
+engine and client wrote it, switches the topic engine if needed, and shows the
+last three exchanges (prompts and final answers; tool calls and thinking are
+left out). Your next message continues that session. Older sessions are one
+`/resume` away.
+
+**Back at the computer.** The bot continues the same session file, so the
+messages from the phone are in its history. Close the session tab you left open
+on the computer and reopen the session from the history list (`claude -c` or
+`claude --resume` in a terminal). If you keep writing into the tab that was
+open all along, the history forks. `/continue` warns about this when the
+session changed less than two minutes ago.
+
+**New-session posts.** With `ANNOUNCE_NEW_SESSIONS=true`, the bot checks every
+20 seconds for new sessions in topic folders and posts the first prompt (up to
+300 characters) silently to that topic. The post moves the topic to the top of
+the list; replying to it continues exactly that session. Only the first prompt
+leaves the machine, not the conversation. The bot's own sessions are skipped.
+The first check of a topic only records its existing sessions, so old history
+is never posted. Put `"announce": false` on topics whose prompts must not reach
+Telegram, for example work repositories: Telegram group chats are not end-to-end
+encrypted.
+
+Limitations:
+
+- `/continue` works in `subprocess` topics; `tmux` topics use `/resume`.
+- In `tmux` topics the bot's TUI sessions look external and would be announced.
+- Sessions started in a subfolder of a project are not announced.
+- A session continued from the phone runs on the bot machine, with its tools,
+  not the ones on your computer.
 
 ## Commands
 
@@ -463,8 +583,11 @@ still exists as a legacy alias, but `/clear` is the command shown in the menu.
   bot-managed active Codex sessions. `/codex_update status` shows the last
   redacted result.
 - `/stream`: forum topics only; choose `verbose`, `live`, or `minimal`.
-- `/resume`: forum topics only; resume a saved tmux session for the current
-  topic working directory.
+- `/resume`: forum topics only; pick a saved Claude Code or Codex session for
+  the current topic working directory.
+- `/continue`: forum topics in `subprocess` mode; continue the newest session of
+  the topic working directory and show its last exchanges. Also on the keyboard
+  as **Continue ▶️**.
 - `/tui`: show and control the live tmux TUI.
 - `/tail`: legacy alias for `/tui`.
 - `/kill`: stop the active tmux session and free resources.
@@ -558,6 +681,7 @@ Do not commit runtime files:
 - `topic_config.json`
 - `session_mapping.json`
 - `channel_sessions.json`
+- `announced_sessions.json`
 - `tmux_sessions/`
 - `data/`
 - `.mcp*.json`
