@@ -1,17 +1,84 @@
-# Telegram AI Agent (fork)
+# Telegram AI Agent: continue your AI coding sessions from Telegram
 
 [Русская версия](README.ru.md)
 
-This is a fork of
-[pavel-molyanov/telegram-ai-agent](https://github.com/pavel-molyanov/telegram-ai-agent)
-with a local speech-to-text backend, two streaming fixes, a configurable topic
-prompt, and features for switching between computer and phone: project folders
-as topics, `/continue`, and new-session posts. See
-[About This Fork](#about-this-fork) for the exact differences. Everything else
-below is the upstream operator manual, kept in sync.
+> A fork of [pavel-molyanov/telegram-ai-agent](https://github.com/pavel-molyanov/telegram-ai-agent).
+> What is different: [About This Fork](#about-this-fork).
+
+Start a task with Claude Code or Codex at your computer, walk away, and keep
+going from your phone in Telegram: the same session, the same context, the same
+project folder. When you are back at the computer, you reopen the session and
+the messages you sent from the phone are already in its history.
+
+<!-- Screenshot: docs/images/handoff.png -->
+
+## Pick Up Where You Left Off
+
+1. Every project folder has its own Telegram forum topic. The bot creates them
+   from a projects folder (`PROJECT_TOPICS_DIR`) and removes them when a
+   folder goes away.
+2. You start a session at the computer, in a terminal or in VS Code. The bot
+   silently posts its first prompt to the project topic, so that topic is at the
+   top of the list when you pick up the phone.
+3. On the phone, open the topic and tap **Continue ▶️** (or send `/continue`).
+   The bot switches the topic to the newest session of that folder and shows
+   the last exchanges. Your next message, typed or spoken, continues it with
+   the full context.
+4. Back at the computer, close the tab you left open and reopen the session
+   from the history list (`claude -c` or `claude --resume` in a terminal).
+
+No conversation is copied anywhere. Claude Code and Codex keep every session as
+a file under `~/.claude/projects` and `~/.codex/sessions`, grouped by project
+folder, and the bot continues that same file. The one condition is that the bot
+sees the same files and the same project path as your computer. Details and
+limitations: [Project Folders And Session Handoff](#project-folders-and-session-handoff).
+
+## Choose Your Setup
+
+| | Where the agent runs | Computer can be off | Effort |
+|---|---|---|---|
+| A. Bot on your computer | your computer | no | lowest |
+| B. Always-on dev server | the server, you connect over SSH | yes | medium |
+| C. Shared files | computer locally, server from the phone | yes | highest |
+
+**A. Bot on the computer you work on.** Install the bot next to your agent CLIs.
+Nothing needs syncing: it sees your projects and your session history as they
+are. The computer has to stay on and awake while you are away. The setup guide
+below covers Linux with systemd; on macOS keeping the bot running is up to you
+(not tested in this fork).
+
+**B. An always-on dev server or container (recommended).** Keep projects, agent
+CLIs and their history on a machine that never sleeps: a home server, a
+container on a NAS, or a VPS. Run the bot there too. At the computer you work on
+it over SSH, with VS Code Remote-SSH or a terminal, so every session from every
+device lands on the server. Your computer can be off. You need a reachable
+machine with SSH; everything else is the same as option A on that machine.
+The fork author uses this setup: a dev container on a home NAS.
+
+**C. Computer and server share files (advanced).** Keep running agents locally
+on the computer, run the bot on a server, and make both sides see the same files
+at the same absolute path: projects on a network share mounted at the same path
+on both, and `~/.claude/projects` and `~/.codex/sessions` on the computer
+pointing to the server copy (for example symlinks into the share, with the same
+home directory path). The paths must match exactly, because sessions are
+grouped by folder path. Keep in mind: the history lives on a network disk, so
+the share must be mounted for agents to start; both sides must use the same
+history retention (`cleanupPeriodDays` in Claude Code settings), or one side
+deletes the other's history; the Codex thread list is a local database, so
+sessions continued from the phone may appear lower in the Codex picker on the
+computer.
+
+In options B and C, whatever the agent does from the phone runs on the server,
+with the tools installed there, not on your laptop.
+
+Only the first prompt of a session is posted to Telegram, never the
+conversation. Telegram group chats are not end-to-end encrypted, so turn posts
+off for work repositories with `"announce": false`.
+
+## What Else The Bot Does
 
 Telegram AI Agent is an open-source Telegram bot for controlling Claude Code and
-Codex CLI on your VPS. It turns Telegram into a remote interface for agentic
+Codex CLI on your server. It turns Telegram into a remote interface for agentic
 coding: open a topic for a project, send tasks from your phone, attach files or
 voice notes, watch progress, resume old sessions, and drive the live terminal
 UI when the agent needs input.
@@ -21,6 +88,10 @@ contain private assistant data, private prompts, runtime state, real IDs,
 tokens, or machine-specific deployment config.
 
 ## About This Fork
+
+The sections above are about the fork. From [What Else The Bot Does](#what-else-the-bot-does)
+down it is the upstream operator manual, kept in sync, with the fork additions
+worked in.
 
 Branches:
 
