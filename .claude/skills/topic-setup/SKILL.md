@@ -3,7 +3,7 @@ name: topic-setup
 description: |
   Create or configure Telegram forum topics for the public Claude/Codex
   Telegram bot. Use when a topic needs a working directory, engine, execution
-  mode, stream mode, MCP config, or a custom prompt mode.
+  mode, stream mode, MCP config, a custom prompt, or new-session posts.
 ---
 
 # Topic Setup
@@ -16,14 +16,16 @@ to the user's checkout.
 
 Determine:
 
-- Current `chat_id` and `thread_id` from `<telegram-context>` when available.
+- The topic's `thread_id`. The bot does not pass chat or thread ids to the agent.
+  Every forum topic is registered in `topic_config.json` automatically when it
+  is created, so look the topic up there by its `name`; ask the user for the
+  topic name if it is ambiguous.
 - `TELEGRAM_BOT_TOKEN` from `.env` or the environment.
 - Forum chat ID:
   - Prefer `NOTIFICATION_CHAT_ID` from `.env` when it points to a
     `type=supergroup` chat with `is_forum=true`.
-  - Use `<telegram-context>.chat_id` only when it is already a supergroup forum
-    chat. Do not use a private chat id from `<telegram-context>` just because
-    the request came from Telegram.
+  - If `NOTIFICATION_CHAT_ID` is not set, ask the user for the forum group chat
+    id; never guess it from a private chat.
   - Do not use `ALLOWED_USER_IDS[0]` as `chat_id` for project topics unless the
     user explicitly asks for private bot-chat Threaded Mode.
   - If no forum group can be discovered locally, ask the user for the forum
@@ -143,16 +145,30 @@ provider default. Manual `/engine` changes preserve the map. During automatic
 missing-CLI fallback, the first fallback request uses the provider default; the
 saved per-engine override applies from the next topic-config lookup.
 
-## Public Prompt Modes
+## Prompt And Modes
 
-The public repo ships with two prompt modes:
+The bot prepends nothing to user messages by default. Standing instructions go
+into `prompt`:
 
-- `free`: the standard project/general prompt for real work.
-- `task`: an example of a replaceable second workflow. For no-code
-  customization, edit `task-manager.md` and keep `mode=task`.
+- top-level `"prompt"` in `topic_config.json`: default for every topic and
+  private chats;
+- per-topic `"prompt"`: overrides it; `""` disables the default for that topic.
 
-A new mode name requires code changes to the runtime resolver and explicit tool
-policy, plus public tests. A prompt file alone is not a complete mode.
+It is added to the first message of a new session in `subprocess` topics (Claude
+Code and Codex) and takes effect after `/clear`; `tmux` topics do not apply it.
+
+`mode` only selects the tool policy: `free` is the standard project/general
+set, `task` is a restricted task-management example. A new mode name requires
+code changes to the runtime resolver and explicit tool policy, plus public tests.
+
+## Project Folders And Session Posts
+
+- With `PROJECT_TOPICS_DIR` set, the bot creates topics for its subfolders
+  itself; do not create them by hand. Folder names to skip go into top-level
+  `"project_topics_ignore"`. Deleting such a folder deletes its topic with its
+  history.
+- With `ANNOUNCE_NEW_SESSIONS=true`, set `"announce": false` on topics whose
+  prompts must not be posted to Telegram (work or confidential repositories).
 
 ## Confirm
 

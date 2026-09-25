@@ -79,7 +79,9 @@ restart the bot after changing it.
 
 For voice transcription, create a Deepgram account, generate an API key, set it
 as `DEEPGRAM_API_KEY` in `.env`, and restart the bot. Leave it empty to disable
-voice messages.
+voice messages. To transcribe locally instead, run an OpenAI-compatible STT
+server (for example speaches) and set `STT_URL` (and optionally `STT_MODEL`);
+when `STT_URL` is set, Deepgram is not used.
 
 ## Foreground Run
 
@@ -110,6 +112,17 @@ When a new forum topic appears, the running bot auto-registers it in
 Code is missing but Codex is installed, it starts with Codex and persists
 `engine=codex` for that topic. If neither CLI exists, the bot still starts and
 tells the user to install Claude Code or Codex.
+
+Optional forum features, both need `NOTIFICATION_CHAT_ID` pointing at the forum
+group and both are read at startup (restart after changing):
+
+- `PROJECT_TOPICS_DIR=/abs/path`: every subfolder gets its own topic with `cwd`
+  set to it, at startup and then every minute; a removed folder deletes its
+  topic with its history (never when the folder is empty, at most 3 per pass).
+- `ANNOUNCE_NEW_SESSIONS=true`: the first prompt of every session started
+  outside the bot (terminal, IDE) is posted silently to the topic with the same
+  `cwd`; replying to the post continues that session. Opt a topic out with
+  `"announce": false` — Telegram groups are not end-to-end encrypted.
 
 ## Systemd Autostart
 
@@ -208,10 +221,12 @@ topic can have its own runtime:
 Fields:
 
 - `type`: `assistant` for generic chats, `project` for project-bound topics.
-- `mode`: public prompt mode. Use `free` as the standard project/general prompt.
-  The bundled `task` mode is an example of a replaceable second workflow.
-  No-code customization replaces `task-manager.md` while keeping `mode=task`;
-  adding a mode name requires runtime resolver and tool-policy code changes.
+- `mode`: tool policy. Use `free` as the standard project/general set; `task`
+  is a restricted task-management example. Adding a mode name requires runtime
+  resolver and tool-policy code changes.
+- `prompt`: optional text prepended to the first message of a new session
+  (`subprocess` topics). A top-level `"prompt"` is the default for all topics;
+  by default nothing is prepended.
 
 Both public prompt modes have the same generic bot MCP send-tool whitelist:
 `send_message`, `send_image`, `send_image_gallery`, and `send_document`.
@@ -224,7 +239,7 @@ Both public prompt modes have the same generic bot MCP send-tool whitelist:
 - `stream_mode`: `verbose`, `live`, or `minimal`.
 - `exec_mode`: `subprocess` for one-off assistant tasks where the user does
   not need a persistent agent process, or `tmux` for full development sessions
-  with persistent context, TUI snapshots, `/resume`, and `/tui`.
+  with persistent context, TUI snapshots, and `/tui`. `/resume` works in both.
 - `engine`: `claude` or `codex`.
 - `models`: optional per-engine overrides keyed by `claude` and/or `codex`.
   The active engine's entry wins over the legacy `model` fallback, and
@@ -258,7 +273,13 @@ overrides.
 - `/stream`: choose progress delivery. `verbose` sends many event messages,
   `live` edits one progress buffer, and `minimal` suppresses tool/status noise.
   Human-readable intermediate updates remain separate in every mode.
-- `/resume`: in tmux mode, pick a saved Claude/Codex session for the topic cwd.
+- `/resume`: pick a saved Claude/Codex session for the topic cwd, including
+  sessions started in a terminal or IDE. In subprocess topics it only changes
+  which session the next message continues.
+- `/continue` (keyboard: Continue ▶️): subprocess topics; switch to the newest
+  session of the topic cwd and show its last three exchanges. It warns when the
+  session changed in the last two minutes, because it may still be open
+  elsewhere and the history would fork.
 - `/tui`: show a current tmux TUI snapshot with controls.
 - `/tail`: alias for `/tui`.
 - `/kill`: stop the active tmux session and free resources.
@@ -307,7 +328,12 @@ Runtime checks:
   `DEEPGRAM_API_KEY` in `.env`, and restart.
 - `/mode`, `/engine`, `/stream`, `/resume` do nothing in private chat: these are
   forum-topic settings.
-- `/resume` unavailable: switch the topic to tmux mode and start a session.
+- `/resume` or `/continue` says there are no sessions: the topic `cwd` must be
+  the exact folder the sessions were started in (subfolders do not count).
+- `/continue` in a tmux topic: use `/resume` there.
+- No new-session posts: check `ANNOUNCE_NEW_SESSIONS=true`, `NOTIFICATION_CHAT_ID`,
+  the topic `cwd`, and `"announce"`; sessions that existed when the bot first saw
+  the topic are never posted. Delete `announced_sessions.json` to reset.
 - Tmux does not start: install `tmux`, check resource limits, and inspect
   service logs.
 - Agent cannot send files/messages through MCP: verify `mcp-servers/bot/start.sh`
