@@ -25,6 +25,7 @@ from telegram_bot.core.handlers.mode import router as mode_router
 from telegram_bot.core.handlers.photo import cleanup_old_tmp_files, ensure_tmp_dir
 from telegram_bot.core.handlers.photo import router as photo_router
 from telegram_bot.core.handlers.recovery import make_recovery_on_event
+from telegram_bot.core.handlers.session_announce import run_session_announcer
 from telegram_bot.core.handlers.streaming import send_streaming_response
 from telegram_bot.core.handlers.tail import router as tail_router
 from telegram_bot.core.handlers.text import router as text_router
@@ -292,6 +293,11 @@ async def _start() -> None:
     background_tasks = [cleanup_task]
     if settings.project_topics_dir and settings.notification_chat_id is not None:
         background_tasks.append(asyncio.create_task(run_project_topics_sync(bot, settings)))
+    if settings.announce_new_sessions and settings.notification_chat_id is not None:
+        state_path = settings.resolve_workspace_path("announced_sessions.json")
+        background_tasks.append(
+            asyncio.create_task(run_session_announcer(bot, settings, session_manager, state_path))
+        )
 
     async def _on_shutdown() -> None:
         logger.info("Shutting down: cleaning up sessions...")

@@ -29,6 +29,7 @@ logs/
 # Runtime state
 session_mapping.json
 channel_sessions.json
+announced_sessions.json
 tmux_sessions/
 .telegram-bot-tmux/
 data/

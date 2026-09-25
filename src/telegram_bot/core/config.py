@@ -78,6 +78,9 @@ class Settings(BaseSettings):
     # Every subfolder here gets its own forum topic in notification_chat_id
     # (cwd = that folder); checked at startup and then every minute. "" = off.
     project_topics_dir: str = ""
+    # Post the first prompt of every session started outside the bot to its
+    # project topic (silently), see handlers/session_announce.py.
+    announce_new_sessions: bool = False
     tmux_sessions_dir: str = "./tmux_sessions"
     codex_update_timeout_sec: float = 180
     codex_update_cooldown_sec: float = 86400
