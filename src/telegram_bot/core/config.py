@@ -75,6 +75,9 @@ class Settings(BaseSettings):
     shutdown_timeout_sec: int = 7  # Gives the service manager time to stop cleanly.
     topic_config_path: str = "./topic_config.json"
     notification_chat_id: int | None = None
+    # Every subfolder here gets its own forum topic in notification_chat_id
+    # (cwd = that folder); checked at startup and then every minute. "" = off.
+    project_topics_dir: str = ""
     tmux_sessions_dir: str = "./tmux_sessions"
     codex_update_timeout_sec: float = 180
     codex_update_cooldown_sec: float = 86400

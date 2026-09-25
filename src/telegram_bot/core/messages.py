@@ -41,6 +41,7 @@ MESSAGES: dict[str, dict[str, str]] = {
             "👋 Topic ready. Tell me what it's for — which project to run in "
             "(path or name), and whether you want a custom prompt for this topic."
         ),
+        "ui.project_topic_welcome": "📁 Project: <code>{cwd}</code>",
         "ui.cancelled": "❌ Cancelled",
         "ui.nothing_to_cancel": "Nothing to cancel",
         "ui.language_current": "Language: <b>{lang}</b>. Use /language ru or /language en.",
@@ -311,6 +312,7 @@ MESSAGES: dict[str, dict[str, str]] = {
             "👋 Тема готова. Скажи, для чего она — какой проект (путь или название) и "
             "нужен ли кастомный промпт."
         ),
+        "ui.project_topic_welcome": "📁 Проект: <code>{cwd}</code>",
         "ui.cancelled": "❌ Отменено",
         "ui.nothing_to_cancel": "Нечего отменять",
         "ui.language_current": "Язык: <b>{lang}</b>. Используй /language ru или /language en.",

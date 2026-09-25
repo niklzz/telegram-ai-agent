@@ -18,6 +18,7 @@ from telegram_bot.core.config import get_settings
 from telegram_bot.core.handlers.cancel import router as cancel_router
 from telegram_bot.core.handlers.commands import router as commands_router
 from telegram_bot.core.handlers.forum_topic import router as forum_topic_router
+from telegram_bot.core.handlers.forum_topic import run_project_topics_sync
 from telegram_bot.core.handlers.forward import ForwardBatcher
 from telegram_bot.core.handlers.forward import router as forward_router
 from telegram_bot.core.handlers.mode import router as mode_router
@@ -288,10 +289,14 @@ async def _start() -> None:
                 logger.warning("Periodic tmp cleanup failed", exc_info=True)
 
     cleanup_task = asyncio.create_task(_periodic_tmp_cleanup())
+    background_tasks = [cleanup_task]
+    if settings.project_topics_dir and settings.notification_chat_id is not None:
+        background_tasks.append(asyncio.create_task(run_project_topics_sync(bot, settings)))
 
     async def _on_shutdown() -> None:
         logger.info("Shutting down: cleaning up sessions...")
-        cleanup_task.cancel()
+        for task in background_tasks:
+            task.cancel()
         await forward_batcher.shutdown()
         await message_queue.shutdown()
         await tmux_manager.stop_transcript_watchdog()

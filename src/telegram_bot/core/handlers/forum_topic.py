@@ -6,7 +6,11 @@ via Telegram UI, or another admin). We catch both and keep topic_config.json
 in sync, so a freshly created topic immediately works with the bot's default
 mode/cwd instead of being an empty room until someone manually edits config.
 
-Topic deletion is intentionally NOT auto-removed from config — losing the
+The reverse direction lives here too: sync_project_topics() creates a topic for
+every folder of Settings.project_topics_dir that no topic points at (by cwd) and
+deletes the topic of a folder that is gone.
+
+Topic deletion in Telegram is intentionally NOT auto-removed from config — losing the
 config entry on accidental deletion would silently strip cwd/mcp settings
 the user spent time configuring. Manual cleanup is safer.
 """
@@ -14,6 +18,7 @@ the user spent time configuring. Manual cleanup is safer.
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import logging
 import os
@@ -22,7 +27,7 @@ from typing import Any
 
 from aiogram import Bot, F, Router
 from aiogram.enums import ParseMode
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramRetryAfter
 from aiogram.types import Message
 
 from telegram_bot.core.config import Settings
@@ -106,14 +111,16 @@ async def on_topic_created(message: Message, settings: Settings, bot: Bot) -> No
 
     logger.info("Auto-registered topic thread_id=%d name=%r", thread_id, name)
 
-    if not newly_registered:
-        return
+    if newly_registered:
+        await _send_welcome(bot, chat_id, thread_id)
 
+
+async def _send_welcome(bot: Bot, chat_id: int, thread_id: int, text: str = "") -> None:
     try:
         await bot.send_message(
             chat_id=chat_id,
             message_thread_id=thread_id,
-            text=t("ui.topic_welcome"),
+            text=text or t("ui.topic_welcome"),
             parse_mode=ParseMode.HTML,
             disable_notification=True,
             reply_markup=topic_keyboard(),
@@ -153,3 +160,122 @@ async def on_topic_edited(message: Message, settings: Settings) -> None:
         _save_config(config_path, config)
 
     logger.info("Topic thread_id=%d renamed to %r", thread_id, new_name)
+
+
+PROJECT_TOPICS_POLL_SEC = 60
+# More folders vanishing in one pass looks like an unmounted/half-synced share,
+# not a cleanup — deleting a topic wipes its whole history, so skip and warn.
+MAX_TOPIC_DELETES_PER_PASS = 3
+
+
+def _is_project_dir(entry: os.DirEntry[str], ignore: set[str]) -> bool:
+    # "#recycle" (Synology bin), "@eaDir" (SMB sidecars), dotfolders are not projects.
+    return entry.is_dir() and entry.name[0] not in ".#@" and entry.name not in ignore
+
+
+async def sync_project_topics(bot: Bot, settings: Settings) -> int:
+    """Mirror project folders to forum topics. Returns number of topics created.
+
+    Matching is by cwd, so a topic deleted in Telegram keeps its config entry and
+    is NOT recreated; top-level "project_topics_ignore": [names] skips folders.
+    A topic whose cwd was a folder of the root that no longer exists is deleted.
+    """
+    assert settings.notification_chat_id is not None
+    root = Path(settings.project_topics_dir)
+    config_path = _resolve_config_path(settings)
+    try:
+        config = _load_config(config_path)
+    except json.JSONDecodeError:
+        return 0
+    known = {e.get("cwd") for e in config["topics"].values() if isinstance(e, dict)}
+    ignore = set(config.get("project_topics_ignore", []))
+    with os.scandir(root) as it:
+        entries = [e for e in it if e.is_dir()]
+    existing = {str(root / e.name) for e in entries}
+    dirs = [str(root / e.name) for e in entries if _is_project_dir(e, ignore)]
+    missing = sorted(d for d in dirs if d not in known)
+    if dirs:  # empty root = share not mounted, never a reason to delete
+        await _delete_gone_topics(bot, settings, config_path, root, existing)
+
+    created = 0
+    for cwd in missing:
+        name = Path(cwd).name[:128]  # Telegram limit for topic names
+        try:
+            topic = await bot.create_forum_topic(settings.notification_chat_id, name)
+        except TelegramRetryAfter as e:
+            logger.info("Flood control on topic create, next try in %ds", e.retry_after)
+            await asyncio.sleep(e.retry_after)
+            break  # the rest goes in the next pass
+        except TelegramAPIError:
+            logger.warning("Failed to create topic for %s", cwd, exc_info=True)
+            break  # usually rights/chat problems — same for every folder
+        key = str(topic.message_thread_id)
+        async with _config_lock:
+            try:
+                config = _load_config(config_path)
+            except json.JSONDecodeError:
+                return created
+            # on_topic_created may have registered it already, without cwd.
+            config["topics"].setdefault(key, _new_entry(name))["cwd"] = cwd
+            _save_config(config_path, config)
+        created += 1
+        logger.info("Created topic thread_id=%s for project %s", key, cwd)
+        await _send_welcome(
+            bot,
+            settings.notification_chat_id,
+            topic.message_thread_id,
+            t("ui.project_topic_welcome", cwd=html.escape(cwd)),
+        )
+    return created
+
+
+async def _delete_gone_topics(
+    bot: Bot, settings: Settings, config_path: Path, root: Path, existing: set[str]
+) -> None:
+    assert settings.notification_chat_id is not None
+    async with _config_lock:
+        try:
+            config = _load_config(config_path)
+        except json.JSONDecodeError:
+            return
+        gone = {
+            key: e["cwd"]
+            for key, e in config["topics"].items()
+            if isinstance(e, dict)
+            and isinstance(e.get("cwd"), str)
+            and Path(e["cwd"]).parent == root
+            and e["cwd"] not in existing
+        }
+    if len(gone) > MAX_TOPIC_DELETES_PER_PASS:
+        logger.warning(
+            "%d project folders vanished at once, not deleting their topics: %s",
+            len(gone),
+            sorted(gone.values()),
+        )
+        return
+    for key, cwd in gone.items():
+        try:
+            await bot.delete_forum_topic(settings.notification_chat_id, int(key))
+        except TelegramBadRequest:
+            logger.info("Topic thread_id=%s for %s already gone in Telegram", key, cwd)
+        except TelegramAPIError:
+            logger.warning("Failed to delete topic for %s", cwd, exc_info=True)
+            return
+        async with _config_lock:
+            try:
+                config = _load_config(config_path)
+            except json.JSONDecodeError:
+                return
+            config["topics"].pop(key, None)
+            _save_config(config_path, config)
+        logger.info("Deleted topic thread_id=%s: project %s is gone", key, cwd)
+
+
+async def run_project_topics_sync(bot: Bot, settings: Settings) -> None:
+    """Startup sync, then poll. ponytail: 60s scandir poll, inotify if a minute is too slow."""
+    while True:
+        try:
+            await sync_project_topics(bot, settings)
+        except Exception:
+            logger.warning("Project topics sync failed", exc_info=True)
+        await asyncio.sleep(PROJECT_TOPICS_POLL_SEC)
