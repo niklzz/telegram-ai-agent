@@ -92,6 +92,8 @@ async def test_announces_only_new_user_sessions(tmp_path: Path) -> None:
     new_codex = "00000000-0000-0000-0000-000000000003"
     _claude(home, "/DEV/a", new_claude, "<b>fix</b> the bug")
     _claude(home, "/DEV/a", "00000000-0000-0000-0000-000000000004", "bot", entrypoint="sdk-cli")
+    bot_sid = "00000000-0000-0000-0000-000000000008"
+    _claude(home, "/DEV/a", bot_sid, "bot", entrypoint="telegram-bot")
     _claude(home, "/DEV/work", "00000000-0000-0000-0000-000000000005", "secret work")
     _codex(home, "/DEV/a", new_codex, "codex task")
     _codex(home, "/DEV/a", "00000000-0000-0000-0000-000000000006", "bot", originator="codex_exec")

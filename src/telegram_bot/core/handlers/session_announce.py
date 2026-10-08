@@ -6,7 +6,8 @@ bumps the topic to the top of the list; /continue (or a reply to the post)
 then continues that session from the phone.
 
 Only the first prompt goes out — the rest of the conversation stays local.
-The bot's own sessions (`claude -p` = entrypoint "sdk-cli", `codex exec`) are
+The bot's own sessions (`claude -p` = entrypoint "telegram-bot", earlier
+"sdk-cli"; `codex exec`) are
 skipped. A topic opts out with `"announce": false` in topic_config.json.
 """
 
@@ -27,7 +28,7 @@ from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
 from telegram_bot.core.config import Settings
 from telegram_bot.core.handlers.forum_topic import _load_config, _resolve_config_path
 from telegram_bot.core.services.claude import SessionManager
-from telegram_bot.core.services.providers import engine_display_name
+from telegram_bot.core.services.providers import CLAUDE_BOT_ENTRYPOINT, engine_display_name
 from telegram_bot.core.services.resume_listing import (
     _CODEX_ORIGINATORS,
     _exchange_row,
@@ -52,7 +53,7 @@ def _first_prompt(provider: str, path: Path) -> str:
 def _claude_is_bot(path: Path) -> bool:
     for data in _iter_jsonl_soft(path):
         if isinstance(data, dict) and "entrypoint" in data:
-            return bool(data["entrypoint"] == "sdk-cli")
+            return data["entrypoint"] in ("sdk-cli", CLAUDE_BOT_ENTRYPOINT)
     return False
 
 

@@ -204,6 +204,11 @@ def extend_agent_env_allowlist(names: set[str]) -> None:
     _CODEX_ENV_ALLOWLIST.update(names)
 
 
+# Claude Code hides "sdk-cli" (= `claude -p`) sessions from /resume and the VS Code
+# session list; a custom entrypoint keeps bot sessions visible there.
+CLAUDE_BOT_ENTRYPOINT = "telegram-bot"
+
+
 def agent_process_env(
     *,
     binary: str | Path | None = None,

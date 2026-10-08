@@ -49,6 +49,7 @@ from telegram_bot.core.services.codex_mcp import (
 )
 from telegram_bot.core.services.process_cleanup import tagged_processes, terminate_processes
 from telegram_bot.core.services.providers import (
+    CLAUDE_BOT_ENTRYPOINT,
     CODEX_ADAPTER,
     ExecCommand,
     agent_process_env,
@@ -472,7 +473,10 @@ class SessionManager:
                     session.model,
                 ),
                 cwd=cwd,
-                env=agent_process_env(binary=claude_binary()),
+                env={
+                    **agent_process_env(binary=claude_binary()),
+                    "CLAUDE_CODE_ENTRYPOINT": CLAUDE_BOT_ENTRYPOINT,
+                },
             )
 
         output_dir = Path(self.file_cache_dir) / "codex-last-message"
@@ -867,6 +871,7 @@ class SessionManager:
                 "APP_ROOT": str(self._settings.app_root_path),
                 "AGENT_WORKSPACE_ROOT": str(self._settings.workspace_root_path),
                 "PROJECT_ROOT": str(self._settings.workspace_root_path),
+                "CLAUDE_CODE_ENTRYPOINT": CLAUDE_BOT_ENTRYPOINT,
             }
         )
         process = await asyncio.create_subprocess_exec(

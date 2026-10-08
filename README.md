@@ -165,6 +165,11 @@ one was picked. Codex sessions from the VS Code extension are listed too.
 - `ANNOUNCE_NEW_SESSIONS`: the first prompt of a session started in a terminal
   or IDE is posted silently to its topic, so the topic is at the top when you
   pick up the phone, and a reply continues that session.
+- Claude sessions started by the bot show up in `/resume` and the VS Code
+  session list: the bot runs `claude -p` with
+  `CLAUDE_CODE_ENTRYPOINT=telegram-bot`, because Claude Code hides `sdk-cli`
+  sessions from both. Sessions recorded before this change stay hidden; open
+  them with `claude --resume <id>`.
 
 Why: with many project topics, finding and continuing the right conversation
 from the phone took longer than the task itself. Details, the way back to the
